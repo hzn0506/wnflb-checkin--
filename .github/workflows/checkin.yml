@@ -2,56 +2,78 @@ name: 福利吧自动签到
 
 on:
   schedule:
-    # 北京时间 1:00 与 22:00（对应 UTC 17:00 / 14:00）
-    - cron: "0 17,14 * * *"
+    # 全部是 UTC，对应北京时间：
+    #   UTC 17:00 = 北京 01:00（隔夜那一刻，最容易漏）
+    #   UTC 04:30 = 北京 12:30（白天兜底）
+    #   UTC 14:00 = 北京 22:00（临睡前最后一次）
+    - cron: "0 17 * * *"
+    - cron: "30 4 * * *"
+    - cron: "0 14 * * *"
   workflow_dispatch: {}
 
+# contents: write —— 把 state.json 台账提交进仓库。台账只记日期和天数，不含任何凭证，
+#                    公开仓库也无所谓；顺带让仓库每天有活动，避免 60 天不动被 GitHub 停掉定时任务
+# actions: write  —— actions/cache 存取 + gh api 删旧缓存
 permissions:
-  contents: read
-  actions: write   # actions/cache 保存缓存 + gh api 删除旧缓存需要写权限
+  contents: write
+  actions: write
+
+concurrency:
+  group: wnflb-checkin
+  cancel-in-progress: false
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # ddddocr 依赖 onnxruntime，3.11 的轮子最全，别用 latest
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: 安装依赖
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+          # ddddocr 只在 Cookie 失效、需要过验证码时才用。
+          # 装不上也不能让整条流水线挂 —— 有缓存 cookie 时根本用不到它。
+          pip install ddddocr || echo "::warning::ddddocr 没装上，Cookie 失效时将无法自动登录"
 
+      # Cookie 存 Actions cache，不进 git（公开仓库提交 cookie = 账号送人）
       - name: 恢复 Cookie 缓存
         id: cookie-restore
         uses: actions/cache/restore@v4
         with:
           path: cookies.json
-          # 固定 key：精确命中(cache-hit)时 cache 不会新建 entry → cookie 没过期就不生成新缓存
           key: wnflb-cookies
 
       - name: 执行签到
         id: checkin
         env:
+          # 和仓库原有的 secret 名字完全一致，不用重新配
           FORUM_USERNAME: ${{ secrets.FORUM_USERNAME }}
           FORUM_PASSWORD: ${{ secrets.FORUM_PASSWORD }}
           FORUM_COOKIE: ${{ secrets.FORUM_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          COOKIE_FILE: cookies.json
         run: python wnflb_checkin.py
 
-      - name: 删除旧 Cookie 缓存（重新登录后）
-        # 仅在脚本本次重新登录成功(refreshed=true)时执行：删掉旧缓存，避免过期 cookie 残留
+      - name: 删除旧 Cookie 缓存
+        # 只在本次真的重新登录过(refreshed=true)时执行，换掉过期的缓存
         if: ${{ steps.checkin.outputs.refreshed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "查询已存在的 wnflb-cookies 缓存 ..."
-          ids=$(gh api "repos/${{ github.repository }}/actions/caches?key=wnflb-cookies" --jq '.actions_caches[].id')
+          ids=$(gh api "repos/${{ github.repository }}/actions/caches?key=wnflb-cookies" --jq '.actions_caches[].id' || true)
           for id in $ids; do
             echo "删除旧缓存 id=$id"
             gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id"
@@ -59,9 +81,40 @@ jobs:
           echo "旧缓存清理完成"
 
       - name: 保存 Cookie 缓存
-        # 同一条件：重新登录后才写入新缓存（生成新的同时旧的已被上一步删除）
         if: ${{ steps.checkin.outputs.refreshed == 'true' }}
         uses: actions/cache/save@v4
         with:
           path: cookies.json
           key: wnflb-cookies
+
+      # 台账持久化。不提交的话每次都是空台账，断档检测等于失效。
+      # 台账里只有日期 / 连续天数 / 累计天数，不含 cookie、不含账号密码。
+      - name: 提交签到台账
+        if: always()
+        run: |
+          if [ ! -f state.json ]; then
+            echo "没有 state.json，跳过"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          if git diff --staged --quiet; then
+            echo "台账无变化"
+          else
+            git commit -m "chore(state): 更新签到台账 $(date -u +%F) [skip ci]"
+            git push || echo "::warning::台账推送失败（可能是分支保护），签到本身不受影响"
+          fi
+
+      # 出问题时把现场捞出来：失败截图 + 台账
+      - name: 上传诊断文件
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-${{ github.run_number }}
+          path: |
+            captcha_fail.png
+            state.json
+            *.log
+          if-no-files-found: ignore
+          retention-days: 14
