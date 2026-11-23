@@ -9,7 +9,7 @@
       "total": 1090
     },
     {
-      "at": "06:22:49",
+      "at": "23:02:34",
       "date": "2026-11-23",
       "signed": true,
       "source": "Cookie",
@@ -19,7 +19,7 @@
   ],
   "last_ok": "2026-11-23",
   "last_run_date": "2026-11-23",
-  "last_run_ts": 1795386169,
+  "last_run_ts": 1795446154,
   "notified_today": "2026-11-23",
   "streak": 127,
   "total": 1091
