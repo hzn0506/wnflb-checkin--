@@ -31,12 +31,20 @@
       "source": "Cookie",
       "streak": 129,
       "total": 1093
+    },
+    {
+      "at": "06:52:34",
+      "date": "2026-11-26",
+      "signed": true,
+      "source": "Cookie",
+      "streak": 130,
+      "total": 1094
     }
   ],
-  "last_ok": "2026-11-25",
-  "last_run_date": "2026-11-25",
-  "last_run_ts": 1795617696,
-  "notified_today": "2026-11-25",
-  "streak": 129,
-  "total": 1093
+  "last_ok": "2026-11-26",
+  "last_run_date": "2026-11-26",
+  "last_run_ts": 1795647154,
+  "notified_today": "2026-11-26",
+  "streak": 130,
+  "total": 1094
 }
